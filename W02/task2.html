@@ -1,0 +1,43 @@
+<html>
+    <head>
+        <title>Task2</title>
+    </head>
+    <body> 
+        <script src="vec3.js"></script>
+        <label for="x">X:</label>
+        <input type="number" id="x">
+        <label for="y">Y:</label>
+        <input type="number" id="y">
+        <label for="z">Z:</label>
+        <input type="number" id="z">
+
+        <input type="button"
+            value="calculate"
+            id="calculate"/>
+
+        <div id="result"></div>
+
+
+            <script>
+                document.getElementById('calculate')
+                .addEventListener('click', function () {
+                    const textbox_x = document.getElementById("x");
+                    var x = parseFloat(textbox_x.value);
+
+                    const textbox_y = document.getElementById("y");
+                    var y = parseFloat(textbox_y.value);
+
+                    const textbox_z = document.getElementById("z");
+                    var z = parseFloat(textbox_z.value);
+
+                    var v = new Vec3(x, y, z);
+                    var min = v.min();
+                    var mid = v.mid();
+                    var max = v.max();
+                
+                    document.getElementById('result').innerHTML = 
+                        "min:" + min + "<br>" + "mid:" +mid + "<br>" + "max:"+max;
+                });
+            </script>
+    </body>
+</html>
