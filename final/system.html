@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>都道府県別 日本人人口・性比の可視化 (2021)</title>
+  <!-- D3.js の読み込み -->
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    h1 {
+      text-align: center;
+    }
+    /* コントロールエリア */
+    #controls {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    /* 全体レイアウト：2段構成 */
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    /* 1段目：棒グラフ（全幅） */
+    #bar-chart {
+      width: 100%;
+      /* max-width を解除 */
+      max-width: none;
+      border: 1px solid #ccc;
+      padding: 10px;
+      background-color: #fafafa;
+    }
+    /* 2段目：散布図と詳細パネル */
+    .row-bottom {
+      display: flex;
+      gap: 20px;
+    }
+    #scatter-plot {
+      flex: 2;
+      border: 1px solid #ccc;
+      padding: 10px;
+      background-color: #fafafa;
+    }
+    #details {
+      flex: 1;
+      border: 1px solid #ccc;
+      padding: 10px;
+      background-color: #fafafa;
+      min-width: 250px;
+    }
+    /* 棒グラフ */
+    .bar {
+      fill: steelblue;
+    }
+    .bar:hover {
+      fill: darkorange;
+    }
+    /* 散布図 */
+    .scatter-circle {
+      fill: teal;
+      cursor: pointer;
+    }
+    .scatter-circle:hover {
+      stroke: red;
+      stroke-width: 1.5px;
+    }
+    .axis text {
+      font-size: 12px;
+    }
+    .legend rect {
+      stroke: #000;
+      stroke-width: 0.5px;
+    }
+    /* ハイライト：より強調（赤色、太い線） */
+    .highlight {
+      stroke: #FF0000;
+      stroke-width: 1px;
+    }
+    /* x軸テキストの基本スタイル */
+    .x-axis text {
+      font-size: 20px;
+      font-weight: normal;
+    }
+    /* ハイライト時の x軸テキスト */
+    .x-axis text.highlight {
+      font-size: 20px;
+      fill: #FF0000;
+      font-weight: normal;
+    }
+  </style>
+</head>
+<body>
+  <h1>都道府県別 日本人人口・性比の可視化 (2021)</h1>
+  <!-- コントロールエリア -->
+  <div id="controls">
+    <button id="sort-btn">人口でソート (降順)</button>
+    <button id="reset-btn">デフォルト順に戻す</button>
+  </div>
+  <!-- 全体レイアウト：2段 -->
+  <div class="container">
+    <!-- 1段目：棒グラフ（全幅） -->
+    <div id="bar-chart"></div>
+    <!-- 2段目：散布図と詳細パネル -->
+    <div class="row-bottom">
+      <div id="scatter-plot"></div>
+      <div id="details">
+        <h2>詳細情報</h2>
+        <p>都道府県をクリックすると詳細が表示されます。</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // persistent（選択状態）の都道府県
+    let selectedPrefecture = null;
+    // defaultOrder を保持するための変数（読み込み順）
+    let defaultOrder = null;
+
+    // 数値変換関数：カンマ除去＆数値変換
+    function convertRow(d) {
+      if (d.pop_total_all) d.pop_total_all = +d.pop_total_all.replace(/,/g, "");
+      if (d.male_all) d.male_all = +d.male_all.replace(/,/g, "");
+      if (d.female_all) d.female_all = +d.female_all.replace(/,/g, "");
+      if (d.ratio_all) d.ratio_all = +d.ratio_all;
+      if (d.pop_total_jpn) d.pop_total_jpn = +d.pop_total_jpn.replace(/,/g, "");
+      if (d.male_jpn) d.male_jpn = +d.male_jpn.replace(/,/g, "");
+      if (d.female_jpn) d.female_jpn = +d.female_jpn.replace(/,/g, "");
+      if (d.ratio_jpn) d.ratio_jpn = +d.ratio_jpn;
+      return d;
+    }
+
+    // CSV の読み込み（population_2021.csv）
+    d3.csv("https://miyaketomoya.github.io/InfoVis2024/final/population_2021.csv", convertRow)
+      .then(function(data) {
+        // 「全国」の行を除外し、各都道府県のデータのみ使用
+        let filteredData = data.filter(d => d.prefecture !== "全国");
+        // 保持する defaultOrder
+        defaultOrder = filteredData.slice();
+        let currentData = filteredData.slice();
+
+        /* ① 棒グラフの作成 */
+        // コンテナの幅を動的に取得
+        let containerWidth = d3.select("#bar-chart").node().getBoundingClientRect().width;
+        const marginBar = { top: 20, right: 20, bottom: 120, left: 60 },
+              widthBar = containerWidth - marginBar.left - marginBar.right,
+              heightBar = 500 - marginBar.top - marginBar.bottom;
+
+        const svgBar = d3.select("#bar-chart")
+                         .append("svg")
+                         .attr("width", widthBar + marginBar.left + marginBar.right)
+                         .attr("height", heightBar + marginBar.top + marginBar.bottom)
+                         .append("g")
+                         .attr("transform", `translate(${marginBar.left},${marginBar.top})`);
+
+        // x軸スケール：都道府県名
+        let xBar = d3.scaleBand()
+                     .domain(currentData.map(d => d.prefecture))
+                     .range([0, widthBar])
+                     .padding(0.1);
+
+        // y軸スケール：日本人人口
+        let yBar = d3.scaleLinear()
+                     .domain([0, d3.max(currentData, d => d.pop_total_jpn)])
+                     .nice()
+                     .range([heightBar, 0]);
+
+        // x軸の描画
+        let xAxisBar = svgBar.append("g")
+                             .attr("class", "x-axis")
+                             .attr("transform", `translate(0,${heightBar})`)
+                             .call(d3.axisBottom(xBar));
+        xAxisBar.selectAll("text")
+                .attr("id", d => "xLabel-" + d.replace(/\s+/g, ""))
+                .attr("transform", "rotate(-45)")
+                .style("text-anchor", "end");
+
+        // y軸の描画
+        svgBar.append("g")
+              .attr("class", "y-axis")
+              .call(d3.axisLeft(yBar));
+
+        // 棒グラフ描画
+        let bars = svgBar.selectAll(".bar")
+                         .data(currentData, d => d.prefecture)
+                         .enter()
+                         .append("rect")
+                         .attr("class", "bar")
+                         .attr("id", d => "bar-" + d.prefecture.replace(/\s+/g, ""))
+                         .attr("x", d => xBar(d.prefecture))
+                         .attr("y", d => yBar(d.pop_total_jpn))
+                         .attr("width", xBar.bandwidth())
+                         .attr("height", d => heightBar - yBar(d.pop_total_jpn))
+                         .on("mouseover", function(event, d) {
+                           if (!selectedPrefecture) {
+                             d3.select(this).classed("highlight", true);
+                             d3.select("#circle-" + d.prefecture.replace(/\s+/g, "")).classed("highlight", true);
+                             d3.select("#xLabel-" + d.prefecture.replace(/\s+/g, "")).classed("highlight", true);
+                             d3.select(this).raise();
+                           }
+                         })
+                         .on("mouseout", function(event, d) {
+                           if (!selectedPrefecture || selectedPrefecture !== d.prefecture) {
+                             d3.select(this).classed("highlight", false);
+                             d3.select("#circle-" + d.prefecture.replace(/\s+/g, "")).classed("highlight", false);
+                             d3.select("#xLabel-" + d.prefecture.replace(/\s+/g, "")).classed("highlight", false);
+                           }
+                         })
+                         .on("click", function(event, d) {
+                           if (selectedPrefecture === d.prefecture) {
+                             selectedPrefecture = null;
+                           } else {
+                             selectedPrefecture = d.prefecture;
+                           }
+                           updatePersistentHighlights();
+                           showDetails(d);
+                         });
+
+        /* ② 散布図の作成 */
+        // 散布図：x軸：日本人人口、y軸：人口性比
+        const marginScatter = { top: 20, right: 20, bottom: 50, left: 60 },
+              widthScatter = 500 - marginScatter.left - marginScatter.right,
+              heightScatter = 500 - marginScatter.top - marginScatter.bottom;
+
+        const svgScatter = d3.select("#scatter-plot")
+                             .append("svg")
+                             .attr("width", widthScatter + marginScatter.left + marginScatter.right)
+                             .attr("height", heightScatter + marginScatter.top + marginScatter.bottom)
+                             .append("g")
+                             .attr("transform", `translate(${marginScatter.left},${marginScatter.top})`);
+
+        let xScatter = d3.scaleLinear()
+                         .domain([0, d3.max(currentData, d => d.pop_total_jpn)])
+                         .nice()
+                         .range([0, widthScatter]);
+
+        let yScatter = d3.scaleLinear()
+                         .domain([d3.min(currentData, d => d.ratio_jpn) - 5, d3.max(currentData, d => d.ratio_jpn) + 5])
+                         .nice()
+                         .range([heightScatter, 0]);
+
+        // x軸
+        svgScatter.append("g")
+                  .attr("transform", `translate(0,${heightScatter})`)
+                  .call(d3.axisBottom(xScatter));
+        // y軸
+        svgScatter.append("g")
+                  .call(d3.axisLeft(yScatter));
+
+        // 軸ラベル
+        svgScatter.append("text")
+                  .attr("x", widthScatter / 2)
+                  .attr("y", heightScatter + marginScatter.bottom - 5)
+                  .attr("text-anchor", "middle")
+                  .text("日本人人口（千人）");
+
+        svgScatter.append("text")
+                  .attr("transform", "rotate(-90)")
+                  .attr("x", -heightScatter / 2)
+                  .attr("y", -marginScatter.left + 15)
+                  .attr("text-anchor", "middle")
+                  .text("人口性比（女性＝100）");
+
+        // 散布図の円描画
+        let circles = svgScatter.selectAll("circle")
+                                .data(currentData, d => d.prefecture)
+                                .enter()
+                                .append("circle")
+                                .attr("class", "scatter-circle")
+                                .attr("id", d => "circle-" + d.prefecture.replace(/\s+/g, ""))
+                                .attr("cx", d => xScatter(d.pop_total_jpn))
+                                .attr("cy", d => yScatter(d.ratio_jpn))
+                                .attr("r", 5)
+                                .on("mouseover", function(event, d) {
+                                  if (!selectedPrefecture) {
+                                    d3.select(this).classed("highlight", true);
+                                    d3.select("#bar-" + d.prefecture.replace(/\s+/g, "")).classed("highlight", true);
+                                    d3.select("#xLabel-" + d.prefecture.replace(/\s+/g, "")).classed("highlight", true);
+                                    d3.select(this).raise();
+                                  }
+                                })
+                                .on("mouseout", function(event, d) {
+                                  if (!selectedPrefecture || selectedPrefecture !== d.prefecture) {
+                                    d3.select(this).classed("highlight", false);
+                                    d3.select("#bar-" + d.prefecture.replace(/\s+/g, "")).classed("highlight", false);
+                                    d3.select("#xLabel-" + d.prefecture.replace(/\s+/g, "")).classed("highlight", false);
+                                  }
+                                })
+                                .on("click", function(event, d) {
+                                  if (selectedPrefecture === d.prefecture) {
+                                    selectedPrefecture = null;
+                                  } else {
+                                    selectedPrefecture = d.prefecture;
+                                  }
+                                  updatePersistentHighlights();
+                                  showDetails(d);
+                                });
+
+        /* ③ ブラシ機能：散布図に縦方向のブラシを追加 */
+        const brush = d3.brushY()
+                        .extent([[0, 0], [widthScatter, heightScatter]])
+                        .on("brush end", brushed);
+
+        svgScatter.append("g")
+                  .attr("class", "brush")
+                  .call(brush);
+
+        function brushed(event) {
+          let selection = event.selection;
+          if (selection) {
+            let [y0, y1] = selection;
+            let rMin = yScatter.invert(y1);
+            let rMax = yScatter.invert(y0);
+            circles.classed("selected", d => d.ratio_jpn >= rMin && d.ratio_jpn <= rMax);
+            bars.attr("opacity", d => (d.ratio_jpn >= rMin && d.ratio_jpn <= rMax) ? 1 : 0.3);
+          } else {
+            circles.classed("selected", false);
+            bars.attr("opacity", 1);
+          }
+        }
+
+        /* ④ ソート機能：ソートボタンとリセットボタン */
+        d3.select("#sort-btn").on("click", function() {
+          currentData.sort((a, b) => b.pop_total_jpn - a.pop_total_jpn);
+          updateBarChart();
+        });
+
+        d3.select("#reset-btn").on("click", function() {
+          currentData = defaultOrder.slice();
+          updateBarChart();
+        });
+
+        // 棒グラフ更新用関数
+        function updateBarChart() {
+          xBar.domain(currentData.map(d => d.prefecture));
+          svgBar.selectAll(".bar")
+                .transition()
+                .duration(1000)
+                .attr("x", d => xBar(d.prefecture));
+          svgBar.select(".x-axis")
+                .transition()
+                .duration(1000)
+                .call(d3.axisBottom(xBar))
+                .selectAll("text")
+                .attr("id", d => "xLabel-" + d.replace(/\s+/g, ""))
+                .attr("transform", "rotate(-45)")
+                .style("text-anchor", "end");
+        }
+
+        /* ⑤ persistent（選択状態）ハイライトの更新 */
+        function updatePersistentHighlights() {
+          svgBar.selectAll(".bar")
+                .classed("highlight", d => d.prefecture === selectedPrefecture);
+          svgBar.selectAll(".x-axis text")
+                .classed("highlight", d => d === selectedPrefecture);
+          svgScatter.selectAll(".scatter-circle")
+                      .classed("highlight", d => d.prefecture === selectedPrefecture);
+        }
+
+        /* ⑥ 詳細情報パネルの更新 */
+        function showDetails(d) {
+          d3.select("#details").html(`
+            <h2>${d.prefecture}</h2>
+            <p><strong>日本人人口（千人）:</strong> ${d.pop_total_jpn}</p>
+            <p><strong>男性（千人）:</strong> ${d.male_jpn}</p>
+            <p><strong>女性（千人）:</strong> ${d.female_jpn}</p>
+            <p><strong>人口性比（女性＝100）:</strong> ${d.ratio_jpn}</p>
+            <hr>
+            <p><strong>全体人口（千人）:</strong> ${d.pop_total_all}</p>
+            <p><strong>全体男性（千人）:</strong> ${d.male_all}</p>
+            <p><strong>全体女性（千人）:</strong> ${d.female_all}</p>
+            <p><strong>全体人口性比（女性＝100）:</strong> ${d.ratio_all}</p>
+            <p><strong>時刻:</strong> ${d.time}</p>
+          `);
+          // persistentな状態の要素を最前面に
+          svgBar.selectAll(".bar").filter(d2 => d2.prefecture === d.prefecture).raise();
+          svgScatter.selectAll(".scatter-circle").filter(d2 => d2.prefecture === d.prefecture).raise();
+        }
+      });
+  </script>
+</body>
+</html>
